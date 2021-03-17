@@ -1,0 +1,3 @@
+[submodule "pico-mdx/mdx2wav"]
+	path = pico-mdx/mdx2wav
+	url = https://github.com/yunkya2/mdx2wav.git
