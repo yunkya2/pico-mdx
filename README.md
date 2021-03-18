@@ -20,11 +20,14 @@ The UF2 binary file is created in `pico-mdx/build/pico-mdx/pico-mdx.uf2`.
 
 The MDX file to play is described in `pico-mdx/pico-mdx/CMakeLists.txt`. Set the full path of MDX file to `MDX_FILE_NAME`.
 
+If you have PDX file corresponding to the MDX file, set the full path of PDX file to `PDX_FILE_NAME`.
+
 ```
 target_compile_definitions(pico-mdx PRIVATE
                     :
        #
        MDX_FILE_NAME="${CMAKE_CURRENT_LIST_DIR}/test.mdx"
+#      PDX_FILE_NAME=""
 )
 ```
 
@@ -32,8 +35,6 @@ target_compile_definitions(pico-mdx PRIVATE
 
 - The player can play only one MDX file embedded in the binary.
 - PCM sampling rate is 22.05kHz.
-- PDX (ADPCM sampling data) playback is not supported.
-
 
 ## License
 
