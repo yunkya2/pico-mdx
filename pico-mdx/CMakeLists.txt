@@ -37,7 +37,10 @@ target_compile_definitions(pico-mdx PRIVATE
 	#
 	PICO_HEAP_SIZE=0x30000
 	#
+	MDX_VOLUME=256
+	#
 	MDX_FILE_NAME="${CMAKE_CURRENT_LIST_DIR}/test.mdx"
+#	PDX_FILE_NAME=""
 )
 
 pico_enable_stdio_usb(pico-mdx 0)

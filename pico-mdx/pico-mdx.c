@@ -70,7 +70,7 @@ struct audio_buffer_pool *init_audio() {
 }
 
 __asm__ (
-  ".section .data\n"
+  ".section .rodata\n"
 
   ".balign 4\n"
   ".global g_mdx_data\n"
@@ -85,17 +85,50 @@ __asm__ (
   ".section .text\n"
 );
 
-extern unsigned char g_mdx_data;
-extern int sz_mdx_data;
+#ifdef PDX_FILE_NAME
+__asm__ (
+  ".section .rodata\n"
+
+  ".balign 4\n"
+  ".global g_pdx_data\n"
+  "g_pdx_data:\n"
+  ".byte 0x00\n"
+  ".byte 0x00\n"
+  ".byte 0x00\n"
+  ".byte 0x00\n"
+  ".byte 0x00\n"
+  ".byte 0x0a\n"
+  ".byte 0x00\n"
+  ".byte 0x02\n"
+  ".byte 0x00\n"
+  ".byte 0x00\n"
+  ".incbin \"" PDX_FILE_NAME "\"\n"
+
+  ".balign 4\n"
+  ".global sz_pdx_data\n"
+  "sz_pdx_data:\n"
+  ".word . - g_pdx_data\n"
+
+  ".section .text\n"
+);
+#endif
+
+extern unsigned char g_mdx_data, g_pdx_data;
+extern int sz_mdx_data, sz_pdx_data;
 
 const int MAGIC_OFFSET = 10;
 
 bool LoadMDX(void)
 {
   unsigned char *mdx_buf = &g_mdx_data;
-  unsigned char *pdx_buf = 0;
   int mdx_size = (int)sz_mdx_data;
+#ifdef PDX_FILE_NAME
+  unsigned char *pdx_buf = &g_pdx_data;
+  int pdx_size = (int)sz_pdx_data;
+#else
+  unsigned char *pdx_buf = 0;
   int pdx_size = 0;
+#endif
 
   int pos = 0;
 
@@ -107,42 +140,33 @@ bool LoadMDX(void)
   }
 
   // Convert mdx to MXDRVG readable structure.
-  int mdx_body_pos = pos;
 
-  unsigned char *mdx_head = mdx_buf + mdx_body_pos - MAGIC_OFFSET;
-  mdx_head[0] = 0x00;
-  mdx_head[1] = 0x00;
-  mdx_head[2] = (pdx_buf ? 0 : 0xff);
-  mdx_head[3] = (pdx_buf ? 0 : 0xff);
-  mdx_head[4] = 0;
-  mdx_head[5] = 0x0a;
-  mdx_head[6] = 0x00;
-  mdx_head[7] = 0x08;
-  mdx_head[8] = 0x00;
-  mdx_head[9] = 0x00;
+  unsigned char *mdx_fixed_buf;
+  int mdx_fixed_size = mdx_size - pos + MAGIC_OFFSET;
 
-  if (pdx_buf) {
-    pdx_buf[0] = 0x00;
-    pdx_buf[1] = 0x00;
-    pdx_buf[2] = 0x00;
-    pdx_buf[3] = 0x00;
-    pdx_buf[4] = 0x00;
-    pdx_buf[5] = 0x0a;
-    pdx_buf[6] = 0x00;
-    pdx_buf[7] = 0x02;
-    pdx_buf[8] = 0x00;
-    pdx_buf[9] = 0x00;
-  }
+  mdx_fixed_buf = malloc(mdx_fixed_size);
+  memcpy(&mdx_fixed_buf[MAGIC_OFFSET], &mdx_buf[pos], mdx_size - pos);
 
-  MXDRVG_SetData(mdx_head, mdx_size, pdx_buf, pdx_size);
+  mdx_fixed_buf[0] = 0x00;
+  mdx_fixed_buf[1] = 0x00;
+  mdx_fixed_buf[2] = (pdx_buf ? 0 : 0xff);
+  mdx_fixed_buf[3] = (pdx_buf ? 0 : 0xff);
+  mdx_fixed_buf[4] = 0;
+  mdx_fixed_buf[5] = 0x0a;
+  mdx_fixed_buf[6] = 0x00;
+  mdx_fixed_buf[7] = 0x08;
+  mdx_fixed_buf[8] = 0x00;
+  mdx_fixed_buf[9] = 0x00;
+
+  MXDRVG_SetData(mdx_fixed_buf, mdx_fixed_size, pdx_buf, pdx_size + MAGIC_OFFSET);
 
   return true;
 }
 
 int main(int argc, char **argv) 
 {
-  int MDX_BUF_SIZE = 100 * 1024;
-  int PDX_BUF_SIZE = 16;
+  int MDX_BUF_SIZE = 16;   // The buffer is no longer used.
+  int PDX_BUF_SIZE = 16;   // The buffer is no longer used.
   int SAMPLE_RATE = SAMPLE_FREQ;
   int filter_mode = 0;
 
@@ -175,7 +199,7 @@ int main(int argc, char **argv)
 
   minfo();
 
-  MXDRVG_TotalVolume(256);
+  MXDRVG_TotalVolume(MDX_VOLUME);
 
   LoadMDX();
 
