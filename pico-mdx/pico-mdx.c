@@ -16,8 +16,13 @@
 
 #include "hardware/clocks.h"
 #include "hardware/structs/clocks.h"
+#include "hardware/gpio.h"
+#include "hardware/sync.h"
+#include "hardware/structs/ioqspi.h"
+#include "hardware/structs/sio.h"
 #include "pico/stdlib.h"
 #include "pico/audio_i2s.h"
+
 
 #define SAMPLE_FREQ         22050
 #define SAMPLES_PER_BUFFER  256
@@ -75,92 +80,116 @@ __asm__ (
   ".balign 4\n"
   ".global g_mdx_data\n"
   "g_mdx_data:\n"
-  ".incbin \"" MDX_FILE_NAME "\"\n"
-
-  ".balign 4\n"
-  ".global sz_mdx_data\n"
-  "sz_mdx_data:\n"
-  ".word . - g_mdx_data\n"
+  ".include \"mdxdata.inc\"\n"
 
   ".section .text\n"
 );
 
-#ifdef PDX_FILE_NAME
-__asm__ (
-  ".section .rodata\n"
+struct mdxdata {
+  unsigned char *mdx;
+  int size;
+  unsigned char *pdx;
+  int psize;
+};
 
-  ".balign 4\n"
-  ".global g_pdx_data\n"
-  "g_pdx_data:\n"
-  ".byte 0x00\n"
-  ".byte 0x00\n"
-  ".byte 0x00\n"
-  ".byte 0x00\n"
-  ".byte 0x00\n"
-  ".byte 0x0a\n"
-  ".byte 0x00\n"
-  ".byte 0x02\n"
-  ".byte 0x00\n"
-  ".byte 0x00\n"
-  ".incbin \"" PDX_FILE_NAME "\"\n"
+extern struct mdxdata g_mdx_data;
+struct mdxdata *gd = &g_mdx_data;
 
-  ".balign 4\n"
-  ".global sz_pdx_data\n"
-  "sz_pdx_data:\n"
-  ".word . - g_pdx_data\n"
-
-  ".section .text\n"
-);
-#endif
-
-extern unsigned char g_mdx_data, g_pdx_data;
-extern int sz_mdx_data, sz_pdx_data;
-
-const int MAGIC_OFFSET = 10;
-
-bool LoadMDX(void)
+int NumMDX(void)
 {
-  unsigned char *mdx_buf = &g_mdx_data;
-  int mdx_size = (int)sz_mdx_data;
-#ifdef PDX_FILE_NAME
-  unsigned char *pdx_buf = &g_pdx_data;
-  int pdx_size = (int)sz_pdx_data;
-#else
-  unsigned char *pdx_buf = 0;
-  int pdx_size = 0;
-#endif
+  int i;
 
-  int pos = 0;
+  for (i = 0; gd[i].mdx != NULL; i++)
+    ;
+  return i;
+}
 
-  printf("load MDX 0x%p size=%d\n", mdx_buf, mdx_size);
+unsigned char mdxbuf[65536];
 
-  while (pos < mdx_size) {
-    unsigned char c = mdx_buf[pos++];
-    if (c == 0) break;
+bool LoadMDX(int index)
+{
+  memcpy(mdxbuf, gd[index].mdx, gd[index].size);
+  MXDRVG_SetData(mdxbuf, gd[index].size, gd[index].pdx, gd[index].psize);
+  return true;
+}
+
+/* From pico-examples/picoboard/button/button.c */
+
+bool __no_inline_not_in_flash_func(get_bootsel_button)() {
+    const uint CS_PIN_INDEX = 1;
+
+    // Must disable interrupts, as interrupt handlers may be in flash, and we
+    // are about to temporarily disable flash access!
+    uint32_t flags = save_and_disable_interrupts();
+
+    // Set chip select to Hi-Z
+    hw_write_masked(&ioqspi_hw->io[CS_PIN_INDEX].ctrl,
+                    GPIO_OVERRIDE_LOW << IO_QSPI_GPIO_QSPI_SS_CTRL_OEOVER_LSB,
+                    IO_QSPI_GPIO_QSPI_SS_CTRL_OEOVER_BITS);
+
+    // Note we can't call into any sleep functions in flash right now
+    for (volatile int i = 0; i < 1000; ++i);
+
+    // The HI GPIO registers in SIO can observe and control the 6 QSPI pins.
+    // Note the button pulls the pin *low* when pressed.
+    bool button_state = !(sio_hw->gpio_hi_in & (1u << CS_PIN_INDEX));
+
+    // Need to restore the state of chip select, else we are going to have a
+    // bad time when we return to code in flash!
+    hw_write_masked(&ioqspi_hw->io[CS_PIN_INDEX].ctrl,
+                    GPIO_OVERRIDE_NORMAL << IO_QSPI_GPIO_QSPI_SS_CTRL_OEOVER_LSB,
+                    IO_QSPI_GPIO_QSPI_SS_CTRL_OEOVER_BITS);
+
+    restore_interrupts(flags);
+
+    return button_state;
+}
+
+#define BUTTON_THRES  (3 * (SAMPLE_FREQ / 10))
+
+int buttoncode(int samples)
+{
+  static int prevbtn = 0;
+  static int duration = 0;
+  static int count = 0;
+  static int press = 0;
+  int res = 0;
+
+  int btn = get_bootsel_button();
+  if (btn != prevbtn) {
+    duration = 0;
+    prevbtn = btn;
+    if (btn) {
+      count++;
+    }
   }
 
-  // Convert mdx to MXDRVG readable structure.
+  duration += samples;
+  if (btn) {
+    if (duration > BUTTON_THRES) {
+      res = -count;
+      press = 1;
+    }
+  } else {
+    if (press) {
+      press = 0;
+      count = 0;
+    }
+    if (duration > BUTTON_THRES) {
+      res = count;
+      count = 0;
+    }
+  }
 
-  unsigned char *mdx_fixed_buf;
-  int mdx_fixed_size = mdx_size - pos + MAGIC_OFFSET;
+  return res;
+}
 
-  mdx_fixed_buf = malloc(mdx_fixed_size);
-  memcpy(&mdx_fixed_buf[MAGIC_OFFSET], &mdx_buf[pos], mdx_size - pos);
-
-  mdx_fixed_buf[0] = 0x00;
-  mdx_fixed_buf[1] = 0x00;
-  mdx_fixed_buf[2] = (pdx_buf ? 0 : 0xff);
-  mdx_fixed_buf[3] = (pdx_buf ? 0 : 0xff);
-  mdx_fixed_buf[4] = 0;
-  mdx_fixed_buf[5] = 0x0a;
-  mdx_fixed_buf[6] = 0x00;
-  mdx_fixed_buf[7] = 0x08;
-  mdx_fixed_buf[8] = 0x00;
-  mdx_fixed_buf[9] = 0x00;
-
-  MXDRVG_SetData(mdx_fixed_buf, mdx_fixed_size, pdx_buf, pdx_size + MAGIC_OFFSET);
-
-  return true;
+void waitbutton(void)
+{
+  while (!get_bootsel_button())
+    ;
+  while (get_bootsel_button())
+    ;
 }
 
 int main(int argc, char **argv) 
@@ -171,9 +200,7 @@ int main(int argc, char **argv)
   int filter_mode = 0;
 
   int loop = 2;
-  int fadeout = 0;
-
-  int AUDIO_BUF_SAMPLES = SAMPLE_RATE / 100; // 10ms
+  int fadeout = 1;
 
   stdio_init_all();
 
@@ -189,47 +216,77 @@ int main(int argc, char **argv)
   minfo();
 
   struct audio_buffer_pool *ap = init_audio();
-
-//    MXDRVG_SetEmulationType(MXDRVG_YM2151TYPE_FMGEN);
-    MXDRVG_SetEmulationType(MXDRVG_YM2151TYPE_MAME);
-
-  minfo();
-
-  MXDRVG_Start(SAMPLE_RATE, filter_mode, MDX_BUF_SIZE, PDX_BUF_SIZE);
-
-  minfo();
-
-  MXDRVG_TotalVolume(MDX_VOLUME);
-
-  LoadMDX();
-
-  float song_duration = MXDRVG_MeasurePlayTime(loop, fadeout) / 1000.0f;
-  // Warning: MXDRVG_MeasurePlayTime calls MXDRVG_End internaly,
-  //          thus we need to call MXDRVG_PlayAt due to reset playing status.
-  MXDRVG_PlayAt(0, loop, fadeout);
-
-  minfo();
+  int vol = MDX_VOLUME;
 
   printf("start\n");
 
+  waitbutton();
+
+  int index = 0;
+  int max = NumMDX();
+
   while (true) {
-    if (MXDRVG_GetTerminated()) {
-      break;
+    printf("track %d\n", index);
+
+    minfo();
+
+//    MXDRVG_SetEmulationType(MXDRVG_YM2151TYPE_FMGEN);
+    MXDRVG_SetEmulationType(MXDRVG_YM2151TYPE_MAME);
+    MXDRVG_Start(SAMPLE_RATE, filter_mode, MDX_BUF_SIZE, PDX_BUF_SIZE);
+    MXDRVG_TotalVolume(vol);
+
+    LoadMDX(index);
+    MXDRVG_PlayAt(0, loop, fadeout);
+
+    int duration = 0;
+
+    while (true) {
+      if (MXDRVG_GetTerminated()) {
+        break;
+      }
+
+      struct audio_buffer *buffer = take_audio_buffer(ap, true);
+      int16_t *samples = (int16_t *) buffer->buffer->bytes;
+      int max_sample_count = buffer->max_sample_count;
+      int len = MXDRVG_GetPCM(samples, max_sample_count);
+      if (len <= 0) {
+        break;
+      }
+
+      buffer->sample_count = len;
+      duration += len;
+      give_audio_buffer(ap, buffer);
+
+      int key = buttoncode(max_sample_count);
+      if (key == 1) {
+        break;
+      } else if (key == 2) {
+        if (duration >= SAMPLE_FREQ * 2) {
+          MXDRVG_PlayAt(0, loop, fadeout);
+          duration = 0;
+        } else {
+          index -= 2;
+          if (index < -1)
+            index = max - 2;
+          break;
+        }
+      } else if (key == 3) {
+        waitbutton();
+      } else if (key < 0) {
+          if (key == -1)
+            vol = vol > 0 ? vol - 1 : 0;
+          if (key == -2)
+            vol = vol < 256 ? vol + 1 : 256;
+          MXDRVG_TotalVolume(vol);
+          printf("vol=%d\n", vol);
+      }
     }
+    MXDRVG_End();
 
-    struct audio_buffer *buffer = take_audio_buffer(ap, true);
-    int16_t *samples = (int16_t *) buffer->buffer->bytes;
-
-    int len = MXDRVG_GetPCM(samples, buffer->max_sample_count);
-    if (len <= 0) {
-      break;
-    }
-
-    buffer->sample_count = len;
-    give_audio_buffer(ap, buffer);
+    index++;
+    if (index >= max)
+      index = 0;
   }
-
-  MXDRVG_End();
 
   return 0;
 }

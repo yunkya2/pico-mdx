@@ -5,6 +5,14 @@ set(CMAKE_CXX_FLAGS_RELEASE "-Wall -O3")
 set(CMAKE_C_FLAGS_DEBUG "-Wall -g")
 set(CMAKE_CXX_FLAGS_DEBUG "-Wall -g")
 
+add_custom_command(OUTPUT mdxdata.inc
+		DEPENDS makemdxdata.py
+		DEPENDS mdxlist.txt
+		COMMAND ${CMAKE_CURRENT_LIST_DIR}/makemdxdata.py ${CMAKE_CURRENT_LIST_DIR}/mdxlist.txt mdxdata.inc
+)
+add_custom_target(generate_data DEPENDS mdxdata.inc)
+set_property(SOURCE pico-mdx.c PROPERTY OBJECT_DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/mdxdata.inc)
+
 add_executable(pico-mdx
 	pico-mdx.c
 	mdx2wav/gamdx/downsample/downsample.cpp
@@ -17,6 +25,7 @@ add_executable(pico-mdx
 	mdx2wav/gamdx/pcm8/x68pcm8.cpp
 	mdx2wav/gamdx/mame/ym2151.c
 )
+add_dependencies(pico-mdx generate_data)
 
 target_include_directories(pico-mdx PUBLIC ${CMAKE_CURRENT_LIST_DIR}/mdx2wav)
 
@@ -35,12 +44,9 @@ target_compile_definitions(pico-mdx PRIVATE
     # define for our example code
     USE_AUDIO_I2S=1
 	#
-	PICO_HEAP_SIZE=0x30000
+	PICO_HEAP_SIZE=0x10000
 	#
-	MDX_VOLUME=256
-	#
-	MDX_FILE_NAME="${CMAKE_CURRENT_LIST_DIR}/test.mdx"
-#	PDX_FILE_NAME=""
+	MDX_VOLUME=40
 )
 
 pico_enable_stdio_usb(pico-mdx 0)

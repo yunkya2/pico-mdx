@@ -1,0 +1,9 @@
+#   mdxlist.txt
+#
+
+#   PDX file search path
+%.
+#%<path-to-pdx-file>
+
+#   MDX file names
+test.mdx
