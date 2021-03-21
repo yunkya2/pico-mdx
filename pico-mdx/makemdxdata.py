@@ -38,8 +38,8 @@ def findpdxfile(mdxname, pdxname):
 
     return None
 
-def dumpdata(name, data):
-    out = name + ':\n'
+def dumpdata(data):
+    out = ''
     p = 0
     while len(data[p:]):
         out += '.byte 0x%02x' % data[p]
@@ -101,11 +101,14 @@ def makemdxdata(cwd, infile, outfile):
                 f.write('0, 0\n')
         f.write('.word 0\n')
         for m in zip(range(len(mdxdata)), mdxdata):
-            f.write(dumpdata("mdxdata%d" % m[0], m[1]))
+            f.write("mdxdata%d:\n" % m[0])
+            f.write(dumpdata(m[1]))
 #        for p in zip(range(len(pdxdata)), pdxdata):
-#            f.write(dumpdata("pdxdata%d" % p[0], p[1]))
+#            f.write("pdxdata%d:\n" % p[0])
+#            f.write(dumpdata(p[1]))
         for p in zip(range(len(pdxfilelist)), pdxfilelist):
             f.write("pdxdata%d:\n" % p[0])
+            f.write(dumpdata(pdxheader))
             f.write('.incbin "' + p[1] +'"\n')
 
 if __name__ == '__main__':
